@@ -5,11 +5,12 @@ import type React from "react"
 import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Textarea } from "@/components/ui/textarea"
-import { Loader2, Mic, Pause, Play, Square, Upload } from "lucide-react"
+import { Loader2, Mic, Pause, Play, Square, Upload, Settings, FileAudio } from "lucide-react"
 import { saveRecording, listRecordings, fetchRecordingBlob } from "./blob-storage-service"
 import RecordingsManager from "./recordings-manager"
+import TranscriptionOptionsComponent, { type TranscriptionOptions } from "./transcription-options"
+import TranscriptionResults from "./transcription-results"
+import DeepgramTest from "./deepgram-test"
 
 export default function SpeechToTextApp() {
   // State for recording
@@ -24,6 +25,18 @@ export default function SpeechToTextApp() {
   const [transcriptText, setTranscriptText] = useState("")
   const [timestampedText, setTimestampedText] = useState("")
   const [jsonOutput, setJsonOutput] = useState("")
+
+  const [transcriptionOptions, setTranscriptionOptions] = useState<TranscriptionOptions>({
+    provider: "deepgram",
+    model: "nova-2",
+    language: "en",
+    diarize: true,
+    sentiment: true,
+    topics: true,
+    detectLanguage: true,
+    customTopicMode: "extended",
+    customTopics: ["medicine", "doctor", "patient"],
+  })
 
   // Refs for audio processing
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -347,21 +360,46 @@ export default function SpeechToTextApp() {
     })
   }
 
-  // Transcribe audio chunks
-  const transcribeAudioChunks = async (chunks: Blob[]): Promise<any[]> => {
-    setStatus(`Transcribing ${chunks.length} audio chunks...`)
+  // Transcribe audio chunks using selected provider
+  const transcribeAudioChunks = async (chunks: Blob[]): Promise<any> => {
+    if (transcriptionOptions.provider === "deepgram") {
+      return transcribeWithDeepgram(chunks[0]) // Deepgram handles full audio, no chunking needed
+    } else {
+      return transcribeWithOpenAI(chunks)
+    }
+  }
 
-    // In a real implementation, you would call the OpenAI API for each chunk
-    // For this demo, we'll simulate the API calls
+  // Transcribe with Deepgram
+  const transcribeWithDeepgram = async (audioBlob: Blob): Promise<any> => {
+    setStatus("Transcribing with Deepgram...")
+
+    const formData = new FormData()
+    formData.append("file", audioBlob)
+    formData.append("options", JSON.stringify(transcriptionOptions))
+
+    const response = await fetch("/api/transcribe/deepgram", {
+      method: "POST",
+      body: formData,
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json()
+      throw new Error(errorData.error || "Transcription failed")
+    }
+
+    return await response.json()
+  }
+
+  // Transcribe with OpenAI (existing simulation)
+  const transcribeWithOpenAI = async (chunks: Blob[]): Promise<any> => {
+    setStatus(`Transcribing ${chunks.length} audio chunks with OpenAI...`)
+
+    // Simulate OpenAI API calls
     const results = []
-
     for (let i = 0; i < chunks.length; i++) {
       setStatus(`Transcribing chunk ${i + 1} of ${chunks.length}...`)
-
-      // Simulate API call delay
       await new Promise((resolve) => setTimeout(resolve, 1000))
 
-      // Simulate API response
       results.push({
         text: `This is the transcription for chunk ${i + 1}.`,
         segments: [
@@ -371,59 +409,56 @@ export default function SpeechToTextApp() {
             end: i * 100 + 30,
             text: `This is segment 1 of chunk ${i + 1}.`,
           },
-          {
-            id: i * 10 + 2,
-            start: i * 100 + 30,
-            end: i * 100 + 60,
-            text: `This is segment 2 of chunk ${i + 1}.`,
-          },
-          {
-            id: i * 10 + 3,
-            start: i * 100 + 60,
-            end: i * 100 + 100,
-            text: `This is segment 3 of chunk ${i + 1}.`,
-          },
         ],
       })
     }
 
-    return results
+    return combineTranscriptionResults(results)
   }
 
-  // Combine transcription results from multiple chunks
-  const combineTranscriptionResults = (results: any[]) => {
-    // Combine plain text
-    const text = results.map((r) => r.text).join(" ")
+  // Combine transcription results from multiple chunks (OpenAI) or return single result (Deepgram)
+  const combineTranscriptionResults = (results: any): any => {
+    if (Array.isArray(results)) {
+      // OpenAI results (array of chunks)
+      const text = results.map((r) => r.text).join(" ")
+      let allSegments: any[] = []
 
-    // Combine timestamped segments
-    let timestamped = ""
-    let allSegments: any[] = []
-
-    results.forEach((result) => {
-      if (result.segments && Array.isArray(result.segments)) {
-        allSegments = [...allSegments, ...result.segments]
-      }
-    })
-
-    // Sort segments by start time
-    allSegments.sort((a, b) => a.start - b.start)
-
-    // Format timestamped text
-    timestamped = allSegments
-      .map((segment) => {
-        const start = segment.start.toFixed(2)
-        const end = segment.end.toFixed(2)
-        return `[${start}s - ${end}s] ${segment.text}`
+      results.forEach((result) => {
+        if (result.segments && Array.isArray(result.segments)) {
+          allSegments = [...allSegments, ...result.segments]
+        }
       })
-      .join("\n")
 
-    // Combine JSON
-    const json = {
-      text,
-      segments: allSegments,
+      allSegments.sort((a, b) => a.start - b.start)
+
+      const timestamped = allSegments
+        .map((segment) => {
+          const start = segment.start.toFixed(2)
+          const end = segment.end.toFixed(2)
+          return `[${start}s - ${end}s] ${segment.text}`
+        })
+        .join("\n")
+
+      return { text, timestamped, json: { text, segments: allSegments } }
+    } else {
+      // Deepgram result (single object)
+      const timestamped =
+        results.paragraphs
+          ?.map((paragraph: any) => {
+            const start = paragraph.start?.toFixed(2) || "0.00"
+            const end = paragraph.end?.toFixed(2) || "0.00"
+            const speaker = paragraph.speaker !== undefined ? ` [Speaker ${paragraph.speaker}]` : ""
+            return `[${start}s - ${end}s]${speaker} ${paragraph.text}`
+          })
+          .join("\n") || ""
+
+      return {
+        text: results.text,
+        timestamped,
+        json: results,
+        fullResults: results, // Store full results for the new component
+      }
     }
-
-    return { text, timestamped, json }
   }
 
   // Handle file upload
@@ -508,64 +543,124 @@ export default function SpeechToTextApp() {
   }
 
   return (
-    <div className="container mx-auto p-4 max-w-7xl">
-      <div className="grid md:grid-cols-[320px_1fr] gap-6">
-        {/* Controls Column */}
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Transcription Controls</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <label htmlFor="model-select" className="block text-sm font-medium text-gray-700 mb-1">
-                  Whisper Model
-                </label>
-                <Select value={selectedModel} onValueChange={setSelectedModel}>
-                  <SelectTrigger id="model-select">
-                    <SelectValue placeholder="Select model" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="whisper-1">whisper-1</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+      {/* Mobile Header */}
+      <div className="sticky top-0 z-50 bg-white/80 backdrop-blur-lg border-b border-slate-200 px-4 py-3 md:hidden">
+        <div className="flex items-center justify-between">
+          <h1 className="text-lg font-semibold text-slate-900">Voice Transcription</h1>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowRecordings(!showRecordings)}
+            className="text-slate-600"
+          >
+            <FileAudio className="h-5 w-5" />
+          </Button>
+        </div>
+      </div>
 
-              <div className="space-y-2">
-                {!isRecording ? (
-                  <Button onClick={startRecording} disabled={isProcessing} className="w-full">
-                    <Mic className="mr-2 h-4 w-4" />
-                    Start Recording
-                  </Button>
-                ) : isPaused ? (
-                  <Button onClick={resumeRecording} disabled={isProcessing} className="w-full">
-                    <Play className="mr-2 h-4 w-4" />
-                    Continue Recording
-                  </Button>
-                ) : (
-                  <Button onClick={pauseRecording} disabled={isProcessing} className="w-full" variant="outline">
-                    <Pause className="mr-2 h-4 w-4" />
-                    Pause Recording
-                  </Button>
-                )}
+      <div className="container mx-auto p-4 max-w-7xl">
+        {/* Desktop Header */}
+        <div className="hidden md:block mb-8">
+          <div className="text-center">
+            <h1 className="text-4xl font-bold text-slate-900 mb-2">Voice Transcription Studio</h1>
+            <p className="text-slate-600 text-lg">Advanced speech-to-text with AI-powered analysis</p>
+          </div>
+        </div>
 
-                <Button
-                  onClick={stopRecording}
-                  disabled={!isRecording || isProcessing}
-                  className="w-full"
-                  variant="destructive"
-                >
-                  <Square className="mr-2 h-4 w-4" />
-                  Stop Recording
-                </Button>
+        {/* Mobile-first Layout */}
+        <div className="space-y-6 md:grid md:grid-cols-[380px_1fr] md:gap-8 md:space-y-0">
+          {/* Controls Panel - Mobile First */}
+          <div className={`space-y-4 ${showRecordings ? "block" : "hidden md:block"}`}>
+            {/* Recording Controls Card */}
+            <Card className="shadow-lg border-0 bg-white/70 backdrop-blur-sm">
+              <CardHeader className="pb-4">
+                <CardTitle className="flex items-center gap-2 text-slate-900">
+                  <div className="p-2 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg">
+                    <Mic className="h-5 w-5 text-white" />
+                  </div>
+                  Recording Controls
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Status Display */}
+                <div className="p-4 bg-gradient-to-r from-slate-50 to-blue-50 rounded-xl border border-slate-200">
+                  <div className="flex items-center space-x-3">
+                    {isProcessing && <Loader2 className="h-5 w-5 animate-spin text-blue-600" />}
+                    {isRecording && !isPaused && (
+                      <div className="flex items-center space-x-2">
+                        <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
+                        <span className="text-sm font-medium text-red-600">RECORDING</span>
+                      </div>
+                    )}
+                    {isPaused && (
+                      <div className="flex items-center space-x-2">
+                        <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                        <span className="text-sm font-medium text-yellow-600">PAUSED</span>
+                      </div>
+                    )}
+                    <p className={`text-sm flex-1 ${isProcessing ? "text-amber-600" : "text-slate-600"}`}>{status}</p>
+                  </div>
 
+                  {/* Waveform Visualization */}
+                  <canvas
+                    ref={canvasRef}
+                    className={`w-full h-16 mt-3 rounded-lg border border-slate-200 ${isRecording ? "block" : "hidden"}`}
+                  />
+                </div>
+
+                {/* Recording Buttons */}
+                <div className="grid grid-cols-2 gap-3">
+                  {!isRecording ? (
+                    <Button
+                      onClick={startRecording}
+                      disabled={isProcessing}
+                      className="col-span-2 h-12 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-medium shadow-lg"
+                    >
+                      <Mic className="mr-2 h-5 w-5" />
+                      Start Recording
+                    </Button>
+                  ) : (
+                    <>
+                      {isPaused ? (
+                        <Button
+                          onClick={resumeRecording}
+                          disabled={isProcessing}
+                          className="h-12 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white"
+                        >
+                          <Play className="mr-2 h-4 w-4" />
+                          Resume
+                        </Button>
+                      ) : (
+                        <Button
+                          onClick={pauseRecording}
+                          disabled={isProcessing}
+                          className="h-12 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-white"
+                        >
+                          <Pause className="mr-2 h-4 w-4" />
+                          Pause
+                        </Button>
+                      )}
+                      <Button
+                        onClick={stopRecording}
+                        disabled={isProcessing}
+                        className="h-12 bg-gradient-to-r from-slate-500 to-slate-600 hover:from-slate-600 hover:to-slate-700 text-white"
+                      >
+                        <Square className="mr-2 h-4 w-4" />
+                        Stop
+                      </Button>
+                    </>
+                  )}
+                </div>
+
+                {/* Upload Button */}
                 <div className="relative">
                   <Button
                     onClick={() => document.getElementById("file-upload")?.click()}
                     disabled={isRecording || isProcessing}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700"
+                    className="w-full h-12 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white font-medium shadow-lg"
                   >
-                    <Upload className="mr-2 h-4 w-4" />
+                    <Upload className="mr-2 h-5 w-5" />
                     Upload Audio File
                   </Button>
                   <input
@@ -578,73 +673,60 @@ export default function SpeechToTextApp() {
                   />
                 </div>
 
-                <p className="text-xs text-center text-gray-500 mt-1">{fileName}</p>
-              </div>
-            </CardContent>
-          </Card>
+                {fileName !== "No file selected" && (
+                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                    <p className="text-sm text-emerald-700 font-medium truncate">{fileName}</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Status</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center space-x-2">
-                {isProcessing && <Loader2 className="h-4 w-4 animate-spin" />}
-                <p className={`text-sm ${isProcessing ? "text-amber-600" : ""}`}>{status}</p>
-              </div>
-              <canvas
-                ref={canvasRef}
-                className={`w-full h-16 mt-2 rounded border ${isRecording ? "block" : "hidden"}`}
-              />
-            </CardContent>
-          </Card>
+            {/* Transcription Options - Collapsible on Mobile */}
+            <Card className="shadow-lg border-0 bg-white/70 backdrop-blur-sm">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-slate-900">
+                  <div className="p-2 bg-gradient-to-r from-purple-500 to-pink-600 rounded-lg">
+                    <Settings className="h-5 w-5 text-white" />
+                  </div>
+                  AI Options
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <TranscriptionOptionsComponent
+                  options={transcriptionOptions}
+                  onChange={setTranscriptionOptions}
+                  disabled={isRecording || isProcessing}
+                />
+              </CardContent>
+            </Card>
 
-          <RecordingsManager onRecordingSelect={handleRecordingSelect} />
-        </div>
+            {/* Deepgram Test - Hidden on Mobile */}
+            <div className="hidden md:block">
+              <DeepgramTest />
+            </div>
 
-        {/* Output Column */}
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Conversation (Plain Text)</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Textarea
-                value={transcriptText}
-                readOnly
-                className="min-h-[120px] font-mono"
-                placeholder="Full conversation text will appear here..."
-              />
-            </CardContent>
-          </Card>
+            {/* Recordings Manager - Collapsible */}
+            <Card className="shadow-lg border-0 bg-white/70 backdrop-blur-sm">
+              <RecordingsManager onRecordingSelect={handleRecordingSelect} />
+            </Card>
+          </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Timestamped Segments</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Textarea
-                value={timestampedText}
-                readOnly
-                className="min-h-[120px] font-mono"
-                placeholder="[0.00s - 5.32s] Segment text..."
-              />
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Raw API JSON Response</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Textarea
-                value={jsonOutput}
-                readOnly
-                className="min-h-[120px] font-mono"
-                placeholder="Verbose JSON from OpenAI API..."
-              />
-            </CardContent>
-          </Card>
+          {/* Results Panel */}
+          <div className={`space-y-6 ${showRecordings ? "hidden md:block" : "block"}`}>
+            <TranscriptionResults
+              results={
+                transcriptText
+                  ? {
+                      text: transcriptText,
+                      timestamped: timestampedText,
+                      raw: jsonOutput ? JSON.parse(jsonOutput) : null,
+                      ...(JSON.parse(jsonOutput || "{}").fullResults || {}),
+                    }
+                  : null
+              }
+              loading={isProcessing}
+            />
+          </div>
         </div>
       </div>
     </div>
