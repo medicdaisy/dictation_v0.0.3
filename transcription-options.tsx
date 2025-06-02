@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { X, Plus } from "lucide-react"
 
 export interface TranscriptionOptions {
-  provider: "openai" | "deepgram"
+  provider: "openai" | "deepgram" | "gemini"
   model: string
   language: string
   diarize: boolean
@@ -19,6 +19,10 @@ export interface TranscriptionOptions {
   detectLanguage: boolean
   customTopicMode: "strict" | "extended" | "default"
   customTopics: string[]
+  // Gemini-specific options
+  includeTimestamps?: boolean
+  speakerLabels?: boolean
+  punctuation?: boolean
 }
 
 interface TranscriptionOptionsProps {
@@ -80,6 +84,7 @@ export default function TranscriptionOptionsComponent({
           <SelectContent>
             <SelectItem value="openai">OpenAI Whisper</SelectItem>
             <SelectItem value="deepgram">Deepgram Nova</SelectItem>
+            <SelectItem value="gemini">Google Gemini</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -96,6 +101,12 @@ export default function TranscriptionOptionsComponent({
           <SelectContent>
             {options.provider === "openai" ? (
               <SelectItem value="whisper-1">whisper-1</SelectItem>
+            ) : options.provider === "gemini" ? (
+              <>
+                <SelectItem value="gemini-2.0-flash-exp">Gemini 2.0 Flash (Latest)</SelectItem>
+                <SelectItem value="gemini-1.5-pro">Gemini 1.5 Pro</SelectItem>
+                <SelectItem value="gemini-1.5-flash">Gemini 1.5 Flash</SelectItem>
+              </>
             ) : (
               <>
                 <SelectItem value="nova-2">Nova-2 (Latest)</SelectItem>
@@ -269,6 +280,52 @@ export default function TranscriptionOptionsComponent({
               )}
             </div>
           )}
+        </div>
+      )}
+      {/* Gemini Features */}
+      {options.provider === "gemini" && (
+        <div className="space-y-4 pt-2">
+          <div className="border-t border-slate-200 pt-4">
+            <Label className="text-sm font-medium text-slate-700 mb-3 block">Gemini Features</Label>
+
+            <div className="grid grid-cols-1 gap-3">
+              <div className="flex items-center space-x-2 p-3 bg-slate-50 rounded-lg">
+                <Switch
+                  id="include-timestamps"
+                  checked={options.includeTimestamps || false}
+                  onCheckedChange={(checked) => updateOption("includeTimestamps", checked)}
+                  disabled={disabled}
+                />
+                <Label htmlFor="include-timestamps" className="text-xs font-medium text-slate-700">
+                  Include Timestamps
+                </Label>
+              </div>
+
+              <div className="flex items-center space-x-2 p-3 bg-slate-50 rounded-lg">
+                <Switch
+                  id="speaker-labels"
+                  checked={options.speakerLabels || false}
+                  onCheckedChange={(checked) => updateOption("speakerLabels", checked)}
+                  disabled={disabled}
+                />
+                <Label htmlFor="speaker-labels" className="text-xs font-medium text-slate-700">
+                  Speaker Labels
+                </Label>
+              </div>
+
+              <div className="flex items-center space-x-2 p-3 bg-slate-50 rounded-lg">
+                <Switch
+                  id="punctuation"
+                  checked={options.punctuation !== false}
+                  onCheckedChange={(checked) => updateOption("punctuation", checked)}
+                  disabled={disabled}
+                />
+                <Label htmlFor="punctuation" className="text-xs font-medium text-slate-700">
+                  Smart Punctuation
+                </Label>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

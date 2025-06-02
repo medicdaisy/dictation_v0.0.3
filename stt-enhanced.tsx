@@ -5,12 +5,13 @@ import type React from "react"
 import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Loader2, Mic, Pause, Play, Square, Upload, Settings, FileAudio } from "lucide-react"
+import { Loader2, Mic, Pause, Play, Square, Upload, Settings, FileAudio, AlertCircle } from "lucide-react"
 import { saveRecording, listRecordings, fetchRecordingBlob } from "./blob-storage-service"
 import RecordingsManager from "./recordings-manager"
 import TranscriptionOptionsComponent, { type TranscriptionOptions } from "./transcription-options"
 import TranscriptionResults from "./transcription-results"
 import DeepgramTest from "./deepgram-test"
+import GeminiTest from "./gemini-test"
 
 export default function SpeechToTextApp() {
   // State for recording
@@ -20,6 +21,7 @@ export default function SpeechToTextApp() {
   const [status, setStatus] = useState("Ready to record or upload")
   const [selectedModel, setSelectedModel] = useState("whisper-1")
   const [fileName, setFileName] = useState("No file selected")
+  const [error, setError] = useState<string | null>(null)
 
   // State for transcription results
   const [transcriptText, setTranscriptText] = useState("")
@@ -27,8 +29,8 @@ export default function SpeechToTextApp() {
   const [jsonOutput, setJsonOutput] = useState("")
 
   const [transcriptionOptions, setTranscriptionOptions] = useState<TranscriptionOptions>({
-    provider: "deepgram",
-    model: "nova-2",
+    provider: "gemini",
+    model: "gemini-2.0-flash-exp",
     language: "en",
     diarize: true,
     sentiment: true,
@@ -36,6 +38,9 @@ export default function SpeechToTextApp() {
     detectLanguage: true,
     customTopicMode: "extended",
     customTopics: ["medicine", "doctor", "patient"],
+    includeTimestamps: true,
+    speakerLabels: true,
+    punctuation: true,
   })
 
   // Refs for audio processing
@@ -61,8 +66,10 @@ export default function SpeechToTextApp() {
     try {
       const recordings = await listRecordings()
       console.log("Loaded recordings:", recordings.length)
-    } catch (error) {
+      setError(null) // Clear any previous errors
+    } catch (error: any) {
       console.error("Error loading stored recordings:", error)
+      setError(`Failed to load recordings: ${error.message}`)
     }
   }
 
@@ -150,6 +157,7 @@ export default function SpeechToTextApp() {
   // Start recording
   const startRecording = async () => {
     try {
+      setError(null)
       setStatus("Requesting microphone permission...")
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -197,6 +205,7 @@ export default function SpeechToTextApp() {
       }
 
       setStatus(message)
+      setError(message)
     }
   }
 
@@ -278,6 +287,7 @@ export default function SpeechToTextApp() {
     }
 
     setIsProcessing(true)
+    setError(null)
     setStatus("Processing audio...")
 
     try {
@@ -286,9 +296,17 @@ export default function SpeechToTextApp() {
         type: mediaRecorderRef.current?.mimeType || "audio/webm",
       })
 
-      // Save original recording to Vercel Blob
+      console.log("Processing recorded audio:", {
+        size: audioBlob.size,
+        type: audioBlob.type,
+        chunks: audioChunksRef.current.length,
+      })
+
+      // Save original recording to storage
+      setStatus("Saving recording...")
       const result = await saveRecording(audioBlob, "live_recording.webm")
       console.log("Recording saved to:", result.url)
+      setStatus("Recording saved successfully. Processing audio...")
 
       // Process audio: remove silence and chunk into segments
       const processedChunks = await processAudioChunks(audioBlob)
@@ -307,7 +325,9 @@ export default function SpeechToTextApp() {
       resetRecording("Transcription complete!")
     } catch (error: any) {
       console.error("Error processing audio:", error)
-      setStatus(`Error: ${error.message}`)
+      const errorMessage = `Error: ${error.message}`
+      setStatus(errorMessage)
+      setError(errorMessage)
       resetRecording()
     }
   }
@@ -364,6 +384,8 @@ export default function SpeechToTextApp() {
   const transcribeAudioChunks = async (chunks: Blob[]): Promise<any> => {
     if (transcriptionOptions.provider === "deepgram") {
       return transcribeWithDeepgram(chunks[0]) // Deepgram handles full audio, no chunking needed
+    } else if (transcriptionOptions.provider === "gemini") {
+      return transcribeWithGemini(chunks[0]) // Gemini handles full audio, no chunking needed
     } else {
       return transcribeWithOpenAI(chunks)
     }
@@ -385,6 +407,27 @@ export default function SpeechToTextApp() {
     if (!response.ok) {
       const errorData = await response.json()
       throw new Error(errorData.error || "Transcription failed")
+    }
+
+    return await response.json()
+  }
+
+  // Transcribe with Gemini
+  const transcribeWithGemini = async (audioBlob: Blob): Promise<any> => {
+    setStatus("Transcribing with Google Gemini...")
+
+    const formData = new FormData()
+    formData.append("file", audioBlob)
+    formData.append("options", JSON.stringify(transcriptionOptions))
+
+    const response = await fetch("/api/transcribe/gemini", {
+      method: "POST",
+      body: formData,
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json()
+      throw new Error(errorData.error || "Gemini transcription failed")
     }
 
     return await response.json()
@@ -480,12 +523,21 @@ export default function SpeechToTextApp() {
   // Process uploaded audio file
   const processUploadedFile = async (file: File) => {
     setIsProcessing(true)
+    setError(null)
     setStatus(`Processing uploaded file: ${file.name}`)
 
     try {
-      // Save original file to Vercel Blob
+      console.log("Processing uploaded file:", {
+        name: file.name,
+        size: file.size,
+        type: file.type,
+      })
+
+      // Save original file to storage
+      setStatus("Saving file...")
       const result = await saveRecording(file, file.name)
       console.log("File saved to:", result.url)
+      setStatus("File saved successfully. Processing audio...")
 
       // Process audio: remove silence and chunk into segments
       const processedChunks = await processAudioChunks(file)
@@ -505,13 +557,16 @@ export default function SpeechToTextApp() {
       setStatus("Transcription complete!")
     } catch (error: any) {
       console.error("Error processing uploaded file:", error)
-      setStatus(`Error: ${error.message}`)
+      const errorMessage = `Error: ${error.message}`
+      setStatus(errorMessage)
+      setError(errorMessage)
       setIsProcessing(false)
     }
   }
 
   const handleRecordingSelect = async (recording: any) => {
     setIsProcessing(true)
+    setError(null)
     setStatus(`Processing selected recording...`)
 
     try {
@@ -537,7 +592,9 @@ export default function SpeechToTextApp() {
       setStatus("Transcription complete!")
     } catch (error: any) {
       console.error("Error processing selected recording:", error)
-      setStatus(`Error: ${error.message}`)
+      const errorMessage = `Error: ${error.message}`
+      setStatus(errorMessage)
+      setError(errorMessage)
       setIsProcessing(false)
     }
   }
@@ -567,6 +624,25 @@ export default function SpeechToTextApp() {
             <p className="text-slate-600 text-lg">Advanced speech-to-text with AI-powered analysis</p>
           </div>
         </div>
+
+        {/* Error Alert */}
+        {error && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 text-red-500 mt-0.5 flex-shrink-0" />
+            <div>
+              <h3 className="font-medium text-red-800">Error</h3>
+              <p className="text-sm text-red-700 mt-1">{error}</p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setError(null)}
+              className="ml-auto text-red-500 hover:text-red-700"
+            >
+              ×
+            </Button>
+          </div>
+        )}
 
         {/* Mobile-first Layout */}
         <div className="space-y-6 md:grid md:grid-cols-[380px_1fr] md:gap-8 md:space-y-0">
@@ -599,7 +675,11 @@ export default function SpeechToTextApp() {
                         <span className="text-sm font-medium text-yellow-600">PAUSED</span>
                       </div>
                     )}
-                    <p className={`text-sm flex-1 ${isProcessing ? "text-amber-600" : "text-slate-600"}`}>{status}</p>
+                    <p
+                      className={`text-sm flex-1 ${isProcessing ? "text-amber-600" : error ? "text-red-600" : "text-slate-600"}`}
+                    >
+                      {status}
+                    </p>
                   </div>
 
                   {/* Waveform Visualization */}
@@ -703,6 +783,11 @@ export default function SpeechToTextApp() {
             {/* Deepgram Test - Hidden on Mobile */}
             <div className="hidden md:block">
               <DeepgramTest />
+            </div>
+
+            {/* Gemini Test - Hidden on Mobile */}
+            <div className="hidden md:block">
+              <GeminiTest />
             </div>
 
             {/* Recordings Manager - Collapsible */}
