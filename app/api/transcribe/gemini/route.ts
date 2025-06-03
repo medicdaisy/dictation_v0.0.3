@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { GoogleGenerativeAI } from "@google/generative-ai"
 
-const MODEL_NAME = "gemini-2.0-flash-exp"
+const MODEL_NAME = "gemini-2.5-pro-preview-tts"
 
 // Gemini transcription API route
 export async function POST(request: NextRequest) {
