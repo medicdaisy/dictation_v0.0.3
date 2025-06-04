@@ -282,7 +282,7 @@ export default function TranscriptionOptionsComponent({
           )}
         </div>
       )}
-      {/* Gemini Features */}
+      {/* m Features */}
       {options.provider === "gemini" && (
         <div className="space-y-4 pt-2">
           <div className="border-t border-slate-200 pt-4">
