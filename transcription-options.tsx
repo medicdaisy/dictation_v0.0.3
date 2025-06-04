@@ -38,7 +38,31 @@ export default function TranscriptionOptionsComponent({
 }: TranscriptionOptionsProps) {
   const [newTopic, setNewTopic] = useState("")
 
+  const handleProviderChange = (newProviderValue: string) => {
+    const newProvider = newProviderValue as "openai" | "deepgram" | "gemini";
+    let newModel = "";
+
+    switch (newProvider) {
+      case "openai": // Corresponds to "Whisper"
+        newModel = "whisper-1";
+        break;
+      case "gemini": // Corresponds to "Emilio LLM STT V4.0"
+        newModel = "gemini-2.5-flash-preview-04-17";
+        break;
+      case "deepgram": // Corresponds to "Emilio LLM STT V4.2"
+        newModel = "nova-3";
+        break;
+      default:
+        console.warn("Unknown provider selected:", newProvider);
+        // Fallback: update only provider, model might become inconsistent
+        onChange({ ...options, provider: newProvider });
+        return;
+    }
+    onChange({ ...options, provider: newProvider, model: newModel });
+  };
+
   const updateOption = (key: keyof TranscriptionOptions, value: any) => {
+    // For direct updates other than provider
     onChange({ ...options, [key]: value })
   }
 
@@ -77,47 +101,23 @@ export default function TranscriptionOptionsComponent({
         <Label htmlFor="provider-select" className="text-sm font-medium text-slate-700">
           Provider
         </Label>
-        <Select value={options.provider} onValueChange={(value) => updateOption("provider", value)} disabled={disabled}>
+        <Select
+          value={options.provider}
+          onValueChange={(value) => handleProviderChange(value)}
+          disabled={disabled}
+        >
           <SelectTrigger id="provider-select" className="h-11">
             <SelectValue placeholder="Select provider" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="openai">OpenAI Whisper</SelectItem>
-            <SelectItem value="deepgram">Deepgram Nova</SelectItem>
-            <SelectItem value="gemini">Google Gemini</SelectItem>
+            <SelectItem value="openai">Whisper</SelectItem>
+            <SelectItem value="gemini">Emilio LLM STT V4.0</SelectItem>
+            <SelectItem value="deepgram">Emilio LLM STT V4.2</SelectItem>
           </SelectContent>
         </Select>
       </div>
 
-      {/* Model Selection */}
-      <div className="space-y-2">
-        <Label htmlFor="model-select" className="text-sm font-medium text-slate-700">
-          Model
-        </Label>
-        <Select value={options.model} onValueChange={(value) => updateOption("model", value)} disabled={disabled}>
-          <SelectTrigger id="model-select" className="h-11">
-            <SelectValue placeholder="Select model" />
-          </SelectTrigger>
-          <SelectContent>
-            {options.provider === "openai" ? (
-              <SelectItem value="whisper-1">whisper-1</SelectItem>
-            ) : options.provider === "gemini" ? (
-              <>
-                <SelectItem value="gemini-2.0-flash-exp">Gemini 2.0 Flash (Latest)</SelectItem>
-                <SelectItem value="gemini-1.5-pro">Gemini 1.5 Pro</SelectItem>
-                <SelectItem value="gemini-1.5-flash">Gemini 1.5 Flash</SelectItem>
-              </>
-            ) : (
-              <>
-                <SelectItem value="nova-2">Nova-2 (Latest)</SelectItem>
-                <SelectItem value="nova">Nova</SelectItem>
-                <SelectItem value="enhanced">Enhanced</SelectItem>
-                <SelectItem value="base">Base</SelectItem>
-              </>
-            )}
-          </SelectContent>
-        </Select>
-      </div>
+      {/* Model Selection - REMOVED and handled internally */}
 
       {/* Language Selection */}
       <div className="space-y-2">
@@ -288,7 +288,7 @@ export default function TranscriptionOptionsComponent({
           <div className="border-t border-slate-200 pt-4">
             <Label className="text-sm font-medium text-slate-700 mb-3 block">Gemini Features</Label>
 
-            <div className="grid grid-cols-1 gap-3">
+            <div className="grid grid-cols-1 gap-3"> {/* Changed to grid-cols-1 for better layout with 3 items */}
               <div className="flex items-center space-x-2 p-3 bg-slate-50 rounded-lg">
                 <Switch
                   id="include-timestamps"
@@ -316,7 +316,7 @@ export default function TranscriptionOptionsComponent({
               <div className="flex items-center space-x-2 p-3 bg-slate-50 rounded-lg">
                 <Switch
                   id="punctuation"
-                  checked={options.punctuation !== false}
+                  checked={options.punctuation !== false} // Defaults to true if undefined
                   onCheckedChange={(checked) => updateOption("punctuation", checked)}
                   disabled={disabled}
                 />
